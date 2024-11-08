@@ -1,5 +1,5 @@
 import { baseLEDStates, initializeEmbeddings } from "./baseEmotions";
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Input } from '@/components/ui/input';
 import { cosineSimilarity, getEmbedding } from "./utils";
 
@@ -22,7 +22,75 @@ const INPUT_STYLES = {
   outline: 'none', // Remove focus outline
 } as const;
 
+// Add new types for LED layouts
+type Point = { x: number, y: number };
+type LayoutGenerator = (totalLEDs: number, dimensions: { width: number, height: number }) => Point[];
+
+// Add layout configurations
+const layouts: Record<string, LayoutGenerator> = {
+  circle: (totalLEDs, { width, height }) => {
+    const points = [];
+    const centerX = width / 2;
+    const centerY = height / 2;
+    const radius = Math.min(width, height) / 3;
+
+    for (let i = 0; i < totalLEDs; i++) {
+      const angle = (i / totalLEDs) * Math.PI * 2;
+      points.push({
+        x: centerX + Math.cos(angle) * radius,
+        y: centerY + Math.sin(angle) * radius
+      });
+    }
+    return points;
+  },
+
+  line: (totalLEDs, { width, height }) => {
+    const points = [];
+    const startX = width * 0.1;
+    const endX = width * 0.9;
+    const y = height / 2;
+
+    for (let i = 0; i < totalLEDs; i++) {
+      points.push({
+        x: startX + (endX - startX) * (i / (totalLEDs - 1)),
+        y
+      });
+    }
+    return points;
+  },
+
+  concentricCircles: (totalLEDs, { width, height }) => {
+    const points = [];
+    const centerX = width / 2;
+    const centerY = height / 2;
+    const maxRadius = Math.min(width, height) / 3;
+    const circles = 4;
+    const ledsPerCircle = Math.floor(totalLEDs / circles);
+
+    for (let c = 0; c < circles; c++) {
+      const radius = maxRadius * ((c + 1) / circles);
+      for (let i = 0; i < ledsPerCircle; i++) {
+        const angle = (i / ledsPerCircle) * Math.PI * 2;
+        points.push({
+          x: centerX + Math.cos(angle) * radius,
+          y: centerY + Math.sin(angle) * radius
+        });
+      }
+    }
+    return points;
+  }
+};
+
+// Add layout type and state
+type LayoutType = keyof typeof layouts;
+const DEFAULT_LAYOUT: LayoutType = 'circle';
+
 const MoodLights = () => {
+  // All useState hooks should be at the top
+  const [dimensions, setDimensions] = useState({
+    width: window.innerWidth,
+    height: window.innerHeight,
+  });
   const [time, setTime] = useState(0);
   const [inputText, setInputText] = useState("Enter your mood");
   const [weights, setWeights] = useState(
@@ -30,12 +98,16 @@ const MoodLights = () => {
       Object.keys(baseLEDStates).map(key => [key, 1 / Object.keys(baseLEDStates).length])
     )
   );
-
-  // Add totalLEDs state
-  const [totalLEDs, setTotalLEDs] = useState(50); // Default to 50 LEDs
-
-  // Add loading state
+  const [totalLEDs, setTotalLEDs] = useState(50);
   const [isInitialized, setIsInitialized] = useState(false);
+  const [layoutType, setLayoutType] = useState<LayoutType>(DEFAULT_LAYOUT);
+
+  // All useCallback hooks
+  const generatePoints = useCallback(() => {
+    return layouts[layoutType](totalLEDs, dimensions);
+  }, [layoutType, totalLEDs, dimensions]);
+
+  const points = useMemo(() => generatePoints(), [generatePoints]);
 
   // Initialize embeddings on mount
   useEffect(() => {
@@ -141,23 +213,6 @@ const MoodLights = () => {
     }
   };
 
-  // Generate points in a circle filling the window
-  const generatePath = () => {
-    const points = [];
-    const { width, height } = dimensions;
-    const centerX = width / 2;
-    const centerY = height / 2;
-    const radius = Math.min(width, height) / 3;
-
-    for (let i = 0; i < totalLEDs; i++) {
-      const angle = (i / totalLEDs) * Math.PI * 2;
-      const x = centerX + Math.cos(angle) * radius;
-      const y = centerY + Math.sin(angle) * radius;
-      points.push({ x, y });
-    }
-    return points;
-  };
-
   // Calculate final color by combining all emotion patterns
   const calculateColor = (index: number, t: number) => {
     const colors = Object.entries(baseLEDStates).map(([emotion, data]) => {
@@ -185,11 +240,6 @@ const MoodLights = () => {
   }, []);
 
   // Handle window resize
-  const [dimensions, setDimensions] = useState({
-    width: window.innerWidth,
-    height: window.innerHeight,
-  });
-
   useEffect(() => {
     const handleResize = () => {
       const { innerWidth, innerHeight } = window;
@@ -206,8 +256,6 @@ const MoodLights = () => {
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
-
-  const points = generatePath();
 
   // Add ref for input
   const inputRef = useRef<HTMLInputElement>(null);

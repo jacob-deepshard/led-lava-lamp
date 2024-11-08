@@ -7,10 +7,17 @@ await tf.ready();
 // Store the model instance
 let modelInstance: use.UniversalSentenceEncoder | null = null;
 
+// Add development flag at the top
+export const DEV_MODE = true; // Set this to false for production
+
 // Initialize the model
 export const initializeModel = async () => {
+  if (DEV_MODE) {
+    console.log('DEV MODE: Skipping model initialization');
+    return null;
+  }
+
   if (!modelInstance) {
-    // Ensure TensorFlow.js is ready
     await tf.ready();
     modelInstance = await use.load();
   }
@@ -19,6 +26,12 @@ export const initializeModel = async () => {
 
 export const getEmbedding = async (text: string) => {
   console.log('Getting embedding for text:', text);
+  
+  // Add development mode shortcut
+  if (DEV_MODE) {
+    console.log('DEV MODE: Returning random embedding vector');
+    return Array.from({ length: 512 }, () => Math.random() - 0.5);
+  }
   
   if (!modelInstance) {
     console.log('Initializing model...');
