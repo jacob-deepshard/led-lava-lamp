@@ -12,3 +12,27 @@ body {
   background-color: #000;
   overflow: hidden;
 }
+
+.mood-input {
+  caret-width: 2px !important;
+  animation: blink 1s step-end infinite;
+}
+
+@keyframes blink {
+  from, to {
+    caret-color: transparent;
+  }
+  50% {
+    caret-color: white;
+  }
+}
+
+.mood-input:focus {
+  outline: none !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+.mood-input::placeholder {
+  color: rgba(255, 255, 255, 0.5);
+}

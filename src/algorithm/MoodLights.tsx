@@ -1,5 +1,5 @@
-import { baseLEDStates } from "./baseEmotions";
-import { useState, useEffect } from 'react';
+import { baseLEDStates, initializeEmbeddings } from "./baseEmotions";
+import { useState, useEffect, useRef } from 'react';
 import { Input } from '@/components/ui/input';
 import { cosineSimilarity, getEmbedding } from "./utils";
 
@@ -9,9 +9,22 @@ type WeightingMechanism = 'weighted-mean' | 'normalized' | 'winner-take-all';
 const WEIGHTING_MECHANISM: WeightingMechanism = 'weighted-mean';
 const DEBUG_MODE = true;
 
+// Add this near the top of the file, after imports
+const INPUT_STYLES = {
+  backgroundColor: 'transparent',
+  border: 'none',
+  color: '#fff',
+  fontSize: '2rem',
+  textAlign: 'center' as const,
+  width: '100%',
+  padding: '20px',
+  caretColor: '#fff', // Make cursor white
+  outline: 'none', // Remove focus outline
+} as const;
+
 const MoodLights = () => {
   const [time, setTime] = useState(0);
-  const [inputText, setInputText] = useState("");
+  const [inputText, setInputText] = useState("Enter your mood");
   const [weights, setWeights] = useState(
     Object.fromEntries(
       Object.keys(baseLEDStates).map(key => [key, 1 / Object.keys(baseLEDStates).length])
@@ -20,6 +33,39 @@ const MoodLights = () => {
 
   // Add totalLEDs state
   const [totalLEDs, setTotalLEDs] = useState(50); // Default to 50 LEDs
+
+  // Add loading state
+  const [isInitialized, setIsInitialized] = useState(false);
+
+  // Initialize embeddings on mount
+  useEffect(() => {
+    const init = async () => {
+      try {
+        await initializeEmbeddings();
+        setIsInitialized(true);
+      } catch (error) {
+        console.error('Failed to initialize embeddings:', error);
+      }
+    };
+    init();
+  }, []);
+
+  // Show loading state if not initialized
+  if (!isInitialized) {
+    return (
+      <div style={{ 
+        width: '100%', 
+        height: '100%', 
+        display: 'flex', 
+        justifyContent: 'center', 
+        alignItems: 'center',
+        backgroundColor: '#000',
+        color: '#fff'
+      }}>
+        Initializing mood lights...
+      </div>
+    );
+  }
 
   // Update weights based on input text
   const updateWeights = async (text: string) => {
@@ -163,24 +209,41 @@ const MoodLights = () => {
 
   const points = generatePath();
 
+  // Add ref for input
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Add effect to keep focus
+  useEffect(() => {
+    if (inputRef.current) {
+      inputRef.current.focus();
+    }
+  }, [isInitialized]); // Re-run when initialized
+
   return (
     <div style={{ width: '100%', height: '100%', backgroundColor: '#000', overflow: 'hidden' }}>
-      {/* Emotion Input */}
-      <div style={{ position: 'absolute', top: 20, left: 20, zIndex: 1 }}>
+      {/* Centered Emotion Input */}
+      <div style={{ 
+        position: 'absolute', 
+        top: '50%', 
+        left: '50%', 
+        transform: 'translate(-50%, -50%)', 
+        zIndex: 1,
+        width: '80%',
+        maxWidth: '600px',
+        textAlign: 'center'
+      }}>
         <Input
+          ref={inputRef}
           type="text"
           value={inputText}
           onChange={(e) => {
             setInputText(e.target.value);
             updateWeights(e.target.value).catch(console.error);
           }}
+          onBlur={() => inputRef.current?.focus()} // Refocus if focus is lost
           placeholder="How are you feeling?"
-          style={{
-            width: '300px',
-            backgroundColor: 'rgba(255, 255, 255, 0.1)',
-            color: '#fff',
-            border: '1px solid #555',
-          }}
+          className="mood-input"
+          style={INPUT_STYLES}
         />
       </div>
 
