@@ -1,68 +1,110 @@
-import { baseEmotions } from "./baseEmotions";
+import { baseLEDStates } from "./baseEmotions";
 import { useState, useEffect } from 'react';
 import { Input } from '@/components/ui/input';
+import { cosineSimilarity, getEmbedding } from "./utils";
+
+// Add new type and constant for weighting mechanisms
+type WeightingMechanism = 'weighted-mean' | 'normalized' | 'winner-take-all';
+
+const WEIGHTING_MECHANISM: WeightingMechanism = 'weighted-mean';
+const DEBUG_MODE = true;
 
 const MoodLights = () => {
   const [time, setTime] = useState(0);
   const [inputText, setInputText] = useState("");
   const [weights, setWeights] = useState(
     Object.fromEntries(
-      Object.keys(baseEmotions).map(key => [key, 1 / Object.keys(baseEmotions).length])
+      Object.keys(baseLEDStates).map(key => [key, 1 / Object.keys(baseLEDStates).length])
     )
   );
 
-  // Simple embedding function
-  const getEmbedding = (text: string) => {
-    // Placeholder embedding
-    return Array(8).fill(0).map(() => Math.random() * 2 - 1);
-  };
-
-  // Calculate cosine similarity between embeddings
-  const cosineSimilarity = (a: number[], b: number[]) => {
-    const dotProduct = a.reduce((sum, ai, i) => sum + ai * b[i], 0);
-    const magnitudeA = Math.sqrt(a.reduce((sum, ai) => sum + ai * ai, 0));
-    const magnitudeB = Math.sqrt(b.reduce((sum, bi) => sum + bi * bi, 0));
-    return dotProduct / (magnitudeA * magnitudeB);
-  };
+  // Add totalLEDs state
+  const [totalLEDs, setTotalLEDs] = useState(50); // Default to 50 LEDs
 
   // Update weights based on input text
-  const updateWeights = (text: string) => {
+  const updateWeights = async (text: string) => {
     if (!text.trim()) {
-      setWeights(Object.fromEntries(
-        Object.keys(baseEmotions).map(key => [key, 1 / Object.keys(baseEmotions).length])
-      ));
+      setWeights(
+        Object.fromEntries(
+          Object.keys(baseLEDStates).map((key) => [
+            key,
+            1 / Object.keys(baseLEDStates).length,
+          ])
+        )
+      );
       return;
     }
 
-    const inputEmbedding = getEmbedding(text);
-    const similarities = Object.entries(baseEmotions).map(([emotion, data]) => ({
-      emotion,
-      similarity: cosineSimilarity(inputEmbedding, data.embedding)
-    }));
+    try {
+      const inputEmbedding = await getEmbedding(text);
+      const similarities = Object.entries(baseLEDStates).map(([emotion, data]) => ({
+        emotion,
+        similarity: cosineSimilarity(inputEmbedding, data.embedding) * data.matchWeight,
+      }));
 
-    // Convert similarities to non-negative values and normalize
-    const minSim = Math.min(...similarities.map(s => s.similarity));
-    const shiftedSims = similarities.map(s => ({
-      ...s,
-      similarity: s.similarity - minSim + 0.1 // Add small constant to avoid zeros
-    }));
-    const total = shiftedSims.reduce((sum, s) => sum + s.similarity, 0);
+      let finalWeights;
+      switch (WEIGHTING_MECHANISM) {
+        case 'weighted-mean':
+          // Current implementation
+          const minSim = Math.min(...similarities.map((s) => s.similarity));
+          const shiftedSims = similarities.map((s) => ({
+            ...s,
+            similarity: s.similarity - minSim + 0.1,
+          }));
+          const total = shiftedSims.reduce((sum, s) => sum + s.similarity, 0);
+          finalWeights = Object.fromEntries(
+            shiftedSims.map((s) => [s.emotion, s.similarity / total])
+          );
+          break;
 
-    setWeights(Object.fromEntries(
-      shiftedSims.map(s => [s.emotion, s.similarity / total])
-    ));
+        case 'normalized':
+          // Simple normalization between 0 and 1
+          const maxSim = Math.max(...similarities.map((s) => s.similarity));
+          const normalizedSims = similarities.map((s) => ({
+            ...s,
+            similarity: s.similarity / maxSim,
+          }));
+          finalWeights = Object.fromEntries(
+            normalizedSims.map((s) => [s.emotion, s.similarity])
+          );
+          break;
+
+        case 'winner-take-all':
+          const winner = similarities.reduce((prev, current) => 
+            prev.similarity > current.similarity ? prev : current
+          );
+          finalWeights = Object.fromEntries(
+            similarities.map((s) => [
+              s.emotion,
+              s.emotion === winner.emotion ? 1 : 0
+            ])
+          );
+          break;
+      }
+
+      if (DEBUG_MODE) {
+        console.log('Input:', text);
+        console.log('Weighting Mechanism:', WEIGHTING_MECHANISM);
+        console.log('Raw Similarities:', similarities);
+        console.log('Final Weights:', finalWeights);
+      }
+
+      setWeights(finalWeights);
+    } catch (error) {
+      console.error('Error updating weights:', error);
+    }
   };
 
   // Generate points in a circle filling the window
-  const generatePath = (numPoints = 50) => {
+  const generatePath = () => {
     const points = [];
     const { width, height } = dimensions;
     const centerX = width / 2;
     const centerY = height / 2;
     const radius = Math.min(width, height) / 3;
 
-    for (let i = 0; i < numPoints; i++) {
-      const angle = (i / numPoints) * Math.PI * 2;
+    for (let i = 0; i < totalLEDs; i++) {
+      const angle = (i / totalLEDs) * Math.PI * 2;
       const x = centerX + Math.cos(angle) * radius;
       const y = centerY + Math.sin(angle) * radius;
       points.push({ x, y });
@@ -72,8 +114,8 @@ const MoodLights = () => {
 
   // Calculate final color by combining all emotion patterns
   const calculateColor = (index: number, t: number) => {
-    const colors = Object.entries(baseEmotions).map(([emotion, data]) => {
-      const pattern = data.pattern(index, t);
+    const colors = Object.entries(baseLEDStates).map(([emotion, data]) => {
+      const pattern = data.pattern(index, t, totalLEDs);
       const weight = weights[emotion];
       return {
         r: pattern.r * weight,
@@ -104,11 +146,17 @@ const MoodLights = () => {
 
   useEffect(() => {
     const handleResize = () => {
+      const { innerWidth, innerHeight } = window;
       setDimensions({
-        width: window.innerWidth,
-        height: window.innerHeight,
+        width: innerWidth,
+        height: innerHeight,
       });
+      // Optionally adjust number of LEDs based on screen size
+      const screenSize = Math.min(innerWidth, innerHeight);
+      setTotalLEDs(Math.max(30, Math.floor(screenSize / 20))); // Adjust divisor to control LED density
     };
+    
+    handleResize(); // Call once on mount
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
@@ -124,7 +172,7 @@ const MoodLights = () => {
           value={inputText}
           onChange={(e) => {
             setInputText(e.target.value);
-            updateWeights(e.target.value);
+            updateWeights(e.target.value).catch(console.error);
           }}
           placeholder="How are you feeling?"
           style={{
